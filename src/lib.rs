@@ -71,46 +71,6 @@ impl<T: Tag + DagCbor> Decode<DagCborCodec> for DnfQuery<T> {
     }
 }
 
-/// Same as a [DnfQuery], but with optimized support for translation.
-///
-/// In this representation, `tags` is a map from tag to index.
-///
-/// E.g. ("a" & "b") | ("b" & "c") | ("d") would be encoded as
-///
-/// {
-///   tags: {
-///     "a": 0,
-///     "b": 1,
-///     "c": 2,
-///     "d": 3
-///   },
-///   sets: [
-///     b0011,
-///     b0110,
-///     b1000,
-///   ]
-/// }
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct TagSetSet<T: Tag> {
-    tags: FnvHashMap<T, u32>,
-    sets: Bitmap,
-}
-
-impl<T: Tag + DagCbor> Encode<DagCborCodec> for TagSetSet<T> {
-    fn encode<W: std::io::Write>(&self, c: DagCborCodec, w: &mut W) -> anyhow::Result<()> {
-        DnfQuery::from(self.clone()).encode(c, w)
-    }
-}
-
-impl<T: Tag + DagCbor> Decode<DagCborCodec> for TagSetSet<T> {
-    fn decode<R: std::io::Read + std::io::Seek>(
-        c: DagCborCodec,
-        r: &mut R,
-    ) -> anyhow::Result<Self> {
-        DnfQuery::decode(c, r).map(Into::into)
-    }
-}
-
 /// A tag index, using bitmaps to encode the distinct tag sets, and a vector
 /// of offsets for each event.
 ///
@@ -141,7 +101,7 @@ impl<T: Tag + DagCbor> Decode<DagCborCodec> for TagSetSet<T> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagIndex<T: Tag> {
     /// efficiently encoded distinct tags
-    tags: TagSetSet<T>,
+    tags: DnfQuery<T>,
     /// tag offset for each event
     events: Vec<u32>,
 }
@@ -160,7 +120,7 @@ impl<T: Tag + DagCbor> Decode<DagCborCodec> for TagIndex<T> {
         c: DagCborCodec,
         r: &mut R,
     ) -> anyhow::Result<Self> {
-        let (tags, events) = <(TagSetSet<T>, Vec<u32>)>::decode(c, r)?;
+        let (tags, events) = <(DnfQuery<T>, Vec<u32>)>::decode(c, r)?;
         Ok(Self { tags, events })
     }
 }
@@ -172,6 +132,15 @@ impl<T: Tag> DnfQuery<T> {
             builder.push(set.clone())?;
         }
         Ok(builder.dnf_query())
+    }
+
+    pub fn dnf_query(&self, dnf: &DnfQuery<T>, result: &mut [bool]) {
+        let translate = dnf
+            .tags
+            .iter()
+            .map(|tag| self.tags.binary_search(tag).map(|x| x as u32).ok())
+            .collect::<Box<_>>();
+        dnf_query0(&self.sets, dnf, &translate, result);
     }
 
     /// An empty dnf query which matches nothing
@@ -275,13 +244,13 @@ impl<T: Tag> TagIndex<T> {
             .map(|set| builder.push(set))
             .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(Self {
-            tags: builder.tag_set_set(),
+            tags: builder.dnf_query(),
             events,
         })
     }
 
     pub fn tags(&self) -> impl Iterator<Item = TagSet<T>> + '_ {
-        let lut = self.tags.tags().collect::<Vec<_>>();
+        let lut = self.tags.terms().collect::<Vec<_>>();
         self.events
             .iter()
             .map(move |offset| lut[*offset as usize].clone())
@@ -290,7 +259,7 @@ impl<T: Tag> TagIndex<T> {
     pub fn get<C: FromIterator<T>>(&self, index: usize) -> Option<C> {
         let mask_index = self.events.get(index)?;
         let mask = self.tags.sets.row(*mask_index as usize);
-        let lut = self.tags.lut();
+        let lut = &self.tags.tags;
         Some(mask.map(|i| lut[i as usize].clone()).collect())
     }
 
@@ -336,72 +305,6 @@ impl<'a, T: Default + 'a> Iterator for SliceIntoIter<'a, T> {
             swap(x, &mut r);
             r
         })
-    }
-}
-
-impl<T: Tag> From<DnfQuery<T>> for TagSetSet<T> {
-    fn from(value: DnfQuery<T>) -> Self {
-        let tags: FnvHashMap<T, u32> = value
-            .tags
-            .iter()
-            .cloned()
-            .enumerate()
-            .map(|(index, tag)| (tag, u32::try_from(index).unwrap()))
-            .collect();
-        Self {
-            tags,
-            sets: value.sets,
-        }
-    }
-}
-
-impl<T: Tag> From<TagSetSet<T>> for DnfQuery<T> {
-    fn from(value: TagSetSet<T>) -> Self {
-        let mut tags = vec![None; value.tags.len()];
-        for (tag, index) in value.tags {
-            tags[index as usize] = Some(tag)
-        }
-        let tags: Vec<T> = tags.into_iter().flatten().collect();
-        Self {
-            tags,
-            sets: value.sets,
-        }
-    }
-}
-
-impl<T: Tag> TagSetSet<T> {
-    #[cfg(test)]
-    pub fn new(data: &[TagSet<T>]) -> anyhow::Result<Self> {
-        let mut builder = DnfQueryBuilder::new();
-        for set in data {
-            builder.push(set.clone())?;
-        }
-        Ok(builder.tag_set_set())
-    }
-
-    pub fn dnf_query(&self, dnf: &DnfQuery<T>, result: &mut [bool]) {
-        let translate = dnf
-            .tags
-            .iter()
-            .map(|tag| self.tags.get(tag).cloned())
-            .collect::<Box<_>>();
-        dnf_query0(&self.sets, dnf, &translate, result);
-    }
-
-    fn lut(&self) -> Vec<T> {
-        let mut tags = vec![None; self.tags.len()];
-        for (tag, index) in &self.tags {
-            tags[*index as usize] = Some(tag)
-        }
-        tags.into_iter().filter_map(|x| x.cloned()).collect()
-    }
-
-    /// get back the tag sets the tag index was created from, in order
-    pub fn tags(&self) -> impl Iterator<Item = TagSet<T>> + '_ {
-        let lut = self.lut();
-        self.sets
-            .iter()
-            .map(move |row| row.map(|i| lut[i as usize].clone()).collect::<TagSet<T>>())
     }
 }
 
@@ -493,24 +396,6 @@ impl<T: Tag> DnfQueryBuilder<T> {
             permutation_table[*j as usize] = i as u32;
         }
         permutation_table
-    }
-
-    /// Return the result as a [TagSetSet]
-    pub(crate) fn tag_set_set(self) -> TagSetSet<T> {
-        let perm = self.permutation_table();
-        let mut tags = self.tags;
-        for v in tags.values_mut() {
-            *v = perm[*v as usize];
-        }
-        let mut sets = vec![IndexSet::default(); self.sets.len()];
-        for (set, index) in self.sets {
-            sets[index as usize] = set
-        }
-        let sets = sets
-            .into_iter()
-            .map(|indexes| indexes.into_iter().map(|index| perm[index as usize]))
-            .collect();
-        TagSetSet { tags, sets }
     }
 
     /// Return the result as a [DnfQuery]
@@ -673,13 +558,6 @@ mod tests {
 
     #[quickcheck]
     fn dnf_query_cbor_roundtrip(value: DnfQuery<TestTag>) -> bool {
-        let bytes = DagCborCodec.encode(&value).unwrap();
-        let value1 = DagCborCodec.decode(&bytes).unwrap();
-        value == value1
-    }
-
-    #[quickcheck]
-    fn tag_set_set_cbor_roundtrip(value: TagSetSet<TestTag>) -> bool {
         let bytes = DagCborCodec.encode(&value).unwrap();
         let value1 = DagCborCodec.decode(&bytes).unwrap();
         value == value1

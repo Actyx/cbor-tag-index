@@ -19,15 +19,6 @@ impl Arbitrary for Bitmap {
     }
 }
 
-impl<T: Tag + Arbitrary> Arbitrary for TagSetSet<T> {
-    fn arbitrary(g: &mut quickcheck::Gen) -> Self {
-        let tags: Vec<TagSetHelper<T>> = Arbitrary::arbitrary(g);
-        let mut tags: Vec<TagSet<T>> = tags.into_iter().map(|x| x.0).collect();
-        tags.truncate(3);
-        TagSetSet::new(&tags).unwrap()
-    }
-}
-
 impl<T: Tag + Arbitrary> Arbitrary for DnfQuery<T> {
     fn arbitrary(g: &mut quickcheck::Gen) -> Self {
         let tags: Vec<TagSetHelper<T>> = Arbitrary::arbitrary(g);
