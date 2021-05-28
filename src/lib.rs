@@ -169,7 +169,7 @@ impl<T: Tag> DnfQuery<T> {
     pub fn new<'a>(sets: impl IntoIterator<Item = &'a TagSet<T>>) -> anyhow::Result<Self> {
         let mut builder = DnfQueryBuilder::new();
         for set in sets {
-            builder.push(&set)?;
+            builder.push(set.clone())?;
         }
         Ok(builder.dnf_query())
     }
@@ -268,10 +268,10 @@ impl<T> FromIterator<T> for DebugUsingDisplay<T> {
 }
 
 impl<T: Tag> TagIndex<T> {
-    pub fn new(e: &[TagSet<T>]) -> anyhow::Result<Self> {
+    pub fn new(e: impl IntoIterator<Item = impl IntoIterator<Item = T>>) -> anyhow::Result<Self> {
         let mut builder = DnfQueryBuilder::new();
         let events = e
-            .iter()
+            .into_iter()
             .map(|set| builder.push(set))
             .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(Self {
@@ -287,7 +287,7 @@ impl<T: Tag> TagIndex<T> {
             .map(move |offset| lut[*offset as usize].clone())
     }
 
-    pub fn get(&self, index: usize) -> Option<TagSet<T>> {
+    pub fn get<C: FromIterator<T>>(&self, index: usize) -> Option<C> {
         let mask_index = self.events.get(index)?;
         let mask = self.tags.sets.row(*mask_index as usize);
         let lut = self.tags.lut();
@@ -374,7 +374,7 @@ impl<T: Tag> TagSetSet<T> {
     pub fn new(data: &[TagSet<T>]) -> anyhow::Result<Self> {
         let mut builder = DnfQueryBuilder::new();
         for set in data {
-            builder.push(set)?;
+            builder.push(set.clone())?;
         }
         Ok(builder.tag_set_set())
     }
@@ -485,34 +485,55 @@ impl<T: Tag> DnfQueryBuilder<T> {
         }
     }
 
+    fn permutation_table(&self) -> Vec<u32> {
+        let mut tags = self.tags.iter().collect::<Vec<_>>();
+        tags.sort_unstable_by_key(|(key, _)| *key);
+        let mut permutation_table = vec![0u32; tags.len()];
+        for (i, (_, j)) in tags.into_iter().enumerate() {
+            permutation_table[*j as usize] = i as u32;
+        }
+        permutation_table
+    }
+
     /// Return the result as a [TagSetSet]
     pub(crate) fn tag_set_set(self) -> TagSetSet<T> {
-        let tags = self.tags;
+        let perm = self.permutation_table();
+        let mut tags = self.tags;
+        for v in tags.values_mut() {
+            *v = perm[*v as usize];
+        }
         let mut sets = vec![IndexSet::default(); self.sets.len()];
         for (set, index) in self.sets {
             sets[index as usize] = set
         }
-        let sets = sets.into_iter().map(|x| x.into_iter()).collect();
+        let sets = sets
+            .into_iter()
+            .map(|indexes| indexes.into_iter().map(|index| perm[index as usize]))
+            .collect();
         TagSetSet { tags, sets }
     }
 
     /// Return the result as a [DnfQuery]
     pub fn dnf_query(self) -> DnfQuery<T> {
+        let perm = self.permutation_table();
         let mut tags = vec![None; self.tags.len()];
         for (tag, index) in self.tags {
-            tags[index as usize] = Some(tag)
+            tags[perm[index as usize] as usize] = Some(tag)
         }
         let tags = tags.into_iter().flatten().collect();
         let mut sets = vec![IndexSet::default(); self.sets.len()];
         for (set, index) in self.sets {
             sets[index as usize] = set
         }
-        let sets = sets.into_iter().map(|x| x.into_iter()).collect();
+        let sets = sets
+            .into_iter()
+            .map(|indexes| indexes.into_iter().map(|index| perm[index as usize]))
+            .collect();
         DnfQuery { tags, sets }
     }
 
-    pub fn push(&mut self, tags: &TagSet<T>) -> anyhow::Result<u32> {
-        let indices = tags.iter().map(|tag| self.add_tag(tag));
+    pub fn push(&mut self, tags: impl IntoIterator<Item = T>) -> anyhow::Result<u32> {
+        let indices = tags.into_iter().map(|tag| self.add_tag(&tag));
         let set = indices.collect::<anyhow::Result<IndexSet>>()?;
         Ok(if let Some(index) = self.sets.get(&set) {
             *index
@@ -590,7 +611,7 @@ mod tests {
 
     // create a dnf query, separated by |
     fn ti(tags: &str) -> TagIndex<TestTag> {
-        TagIndex::new(&tss(tags)).unwrap()
+        TagIndex::new(tss(tags)).unwrap()
     }
 
     use super::*;
@@ -643,7 +664,7 @@ mod tests {
     fn dnf_query_ipld() {
         let query = dnf("zab|bc|def|gh");
         let expected = ipld! {
-            [["a", "b", "z", "c", "d", "e", "f", "g", "h"], [[0, 1, 1], [1, 2], [4, 1, 1], [7, 1]]]
+            [["a", "b", "c", "d", "e", "f", "g", "h", "z"], [[0, 1, 8], [1, 2], [3, 4, 5], [6, 7]]]
         };
         let data = DagCborCodec.encode(&query).unwrap();
         println!("{}", hex::encode(data));

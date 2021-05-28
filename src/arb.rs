@@ -41,6 +41,6 @@ impl<T: Tag + Arbitrary> Arbitrary for TagIndex<T> {
     fn arbitrary(g: &mut quickcheck::Gen) -> Self {
         let tags: Vec<TagSetHelper<T>> = Arbitrary::arbitrary(g);
         let tags: Vec<TagSet<T>> = tags.into_iter().map(|x| x.0).collect();
-        TagIndex::new(&tags).unwrap()
+        TagIndex::new(tags).unwrap()
     }
 }

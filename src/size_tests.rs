@@ -57,7 +57,7 @@ fn create_example(
             )
         })
         .collect::<Vec<_>>();
-    let index = TagIndex::new(&events)?;
+    let index = TagIndex::new(events)?;
     let query = DnfQuery::new(&query)?;
     Ok((index, query))
 }

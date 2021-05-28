@@ -203,11 +203,10 @@ impl Encode<DagCborCodec> for Bitmap {
 
 impl Encode<DagCborCodec> for SparseBitmap {
     fn encode<W: io::Write>(&self, c: DagCborCodec, w: &mut W) -> anyhow::Result<()> {
-        let mut rows: Vec<Vec<u32>> = self
+        let rows: Vec<Vec<u32>> = self
             .iter()
             .map(|row_iter| row_iter.into_iter().cloned().collect::<Vec<_>>())
             .collect();
-        rows.iter_mut().for_each(|row| delta_encode(row));
         rows.encode(c, w)?;
         Ok(())
     }
@@ -215,11 +214,10 @@ impl Encode<DagCborCodec> for SparseBitmap {
 
 impl Encode<DagCborCodec> for DenseBitmap {
     fn encode<W: io::Write>(&self, c: DagCborCodec, w: &mut W) -> anyhow::Result<()> {
-        let mut rows: Vec<Vec<u32>> = self
+        let rows: Vec<Vec<u32>> = self
             .iter()
             .map(|row| OneBitsIterator(*row).collect::<Vec<_>>())
             .collect();
-        rows.iter_mut().for_each(|row| delta_encode(row));
         rows.encode(c, w)?;
         Ok(())
     }
@@ -243,8 +241,7 @@ impl Decode<DagCborCodec> for Bitmap {
 
 impl Decode<DagCborCodec> for SparseBitmap {
     fn decode<R: io::Read + io::Seek>(c: DagCborCodec, r: &mut R) -> anyhow::Result<Self> {
-        let mut rows: Vec<Vec<u32>> = Decode::decode(c, r)?;
-        rows.iter_mut().for_each(|row| delta_decode(row));
+        let rows: Vec<Vec<u32>> = Decode::decode(c, r)?;
         Ok(Self(
             rows.into_iter()
                 .map(|row| row.into_iter().collect::<VecSet<_>>())
@@ -255,8 +252,7 @@ impl Decode<DagCborCodec> for SparseBitmap {
 
 impl Decode<DagCborCodec> for DenseBitmap {
     fn decode<R: io::Read + io::Seek>(c: DagCborCodec, r: &mut R) -> anyhow::Result<Self> {
-        let mut rows: Vec<Vec<u32>> = Decode::decode(c, r)?;
-        rows.iter_mut().for_each(|row| delta_decode(row));
+        let rows: Vec<Vec<u32>> = Decode::decode(c, r)?;
         Ok(Self(
             rows.into_iter()
                 .map(mask_from_bits_iter)
@@ -294,18 +290,6 @@ impl<'a> Iterator for BitmapRowIter<'a> {
             Self::Dense(x) => x.next(),
             Self::Sparse(x) => x.next().cloned(),
         }
-    }
-}
-
-fn delta_encode(data: &mut [u32]) {
-    for i in (1..data.len()).rev() {
-        data[i] = data[i].wrapping_sub(data[i - 1]);
-    }
-}
-
-fn delta_decode(data: &mut [u32]) {
-    for i in 1..data.len() {
-        data[i] = data[i].wrapping_add(data[i - 1]);
     }
 }
 
@@ -371,12 +355,6 @@ impl BitmapRow {
 
 impl FromIterator<u32> for BitmapRow {
     fn from_iter<I: IntoIterator<Item = u32>>(iter: I) -> Self {
-        // add the delta decoding
-        let mut offset = 0u32;
-        let iter = iter.into_iter().map(move |x| {
-            offset = offset.wrapping_add(x);
-            offset
-        });
         BitmapRow(to_mask_or_set(iter))
     }
 }
@@ -449,16 +427,6 @@ mod tests {
         let iter = OneBitsIterator(value);
         let value1 = mask_from_bits_iter(iter).unwrap();
         value == value1
-    }
-
-    #[quickcheck]
-    fn delta_decode_roundtrip(mut values: Vec<u32>) -> bool {
-        values.sort_unstable();
-        values.dedup();
-        let reference = values.clone();
-        delta_encode(&mut values);
-        delta_decode(&mut values);
-        values == reference
     }
 
     #[quickcheck]
