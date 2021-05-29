@@ -250,6 +250,10 @@ impl<T: Tag> TagIndex<T> {
         })
     }
 
+    pub fn distinct_tags(&self) -> &[T] {
+        &self.tags.tags
+    }
+
     pub fn tags(&self) -> impl Iterator<Item = TagSet<T>> + '_ {
         let lut = self.tags.terms().collect::<Vec<_>>();
         self.events

@@ -1,8 +1,11 @@
 [package]
 name = "cbor-tag-index"
-version = "0.1.0"
-authors = ["Ruediger Klaehn <rklaehn@protonmail.com>"]
+version = "0.1.1"
+authors = ["Actyx AG"]
 edition = "2018"
+license = "MIT OR Apache-2.0"
+categories = ["data-structures"]
+description = "Tag index"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
