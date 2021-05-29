@@ -11,7 +11,13 @@ use vec_collections::VecSet;
 // set for the sparse case
 pub(crate) type IndexSet = VecSet<[u32; 4]>;
 // mask for the dense case
-pub(crate) type IndexMask = u128;
+pub(crate) type IndexMask = u64;
+
+const ONE: IndexMask = 1;
+const DENSE_BITS: u32 = (std::mem::size_of::<IndexMask>() as u32) * 8;
+const MIN_SPARSE_INDEX: u32 = DENSE_BITS;
+#[cfg(test)]
+const MAX_DENSE_INDEX: u32 = DENSE_BITS - 1;
 
 /// A bitmap with a dense and a sparse case
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,34 +305,34 @@ impl Iterator for OneBitsIterator {
     type Item = u32;
     fn next(&mut self) -> Option<Self::Item> {
         let offset = self.0.trailing_zeros();
-        if offset == 128 {
+        if offset == MIN_SPARSE_INDEX {
             None
         } else {
-            self.0 &= !(1u128 << offset);
+            self.0 &= !(ONE << offset);
             Some(offset)
         }
     }
 }
 
-/// Given an interator of bits, creates a 128 bit bitmask.
+/// Given an interator of bits, creates a DENSE_BITS bit bitmask.
 /// If any of the bits is too high, returns an error.
 pub fn mask_from_bits_iter(iterator: impl IntoIterator<Item = u32>) -> anyhow::Result<IndexMask> {
     let mut mask: IndexMask = 0;
     let iter = iterator.into_iter();
     for bit in iter {
-        anyhow::ensure!(bit < 128);
-        mask |= 1u128 << bit;
+        anyhow::ensure!(bit < MIN_SPARSE_INDEX);
+        mask |= ONE << bit;
     }
     Ok(mask)
 }
 
-/// Given an iterator of bits, creates either a 128 bit bitmask, or a set of bits.
+/// Given an iterator of bits, creates either a DENSE_BITS bit bitmask, or a set of bits.
 fn to_mask_or_set(iterator: impl IntoIterator<Item = u32>) -> result::Result<IndexMask, IndexSet> {
     let mut mask: IndexMask = 0;
     let mut iter = iterator.into_iter();
     while let Some(bit) = iter.next() {
-        if bit < 128 {
-            mask |= 1u128 << bit;
+        if bit < MIN_SPARSE_INDEX {
+            mask |= ONE << bit;
         } else {
             let mut res = OneBitsIterator(mask).collect::<FnvHashSet<_>>();
             res.insert(bit);
@@ -377,40 +383,40 @@ mod tests {
 
     #[test]
     fn dense_1() {
-        let bitmap = Bitmap::new(vec![vec![1, 2, 4, 8, 127]; 7]);
+        let bitmap = Bitmap::new(vec![vec![1, 2, 4, 8, MAX_DENSE_INDEX]; 7]);
         assert!(bitmap.is_dense());
         assert_eq!(bitmap.rows(), 7);
         for i in 0..bitmap.rows() {
-            assert_eq!(bitmap.row(i).collect::<Vec<_>>(), vec![1, 2, 4, 8, 127]);
+            assert_eq!(bitmap.row(i).collect::<Vec<_>>(), vec![1, 2, 4, 8, MAX_DENSE_INDEX]);
         }
     }
 
     #[test]
     fn sparse_1() {
-        let bitmap = Bitmap::new(vec![vec![1, 2, 4, 8, 128]; 9]);
+        let bitmap = Bitmap::new(vec![vec![1, 2, 4, 8, MIN_SPARSE_INDEX]; 9]);
         assert!(!bitmap.is_dense());
         assert_eq!(bitmap.rows(), 9);
         for i in 0..bitmap.rows() {
-            assert_eq!(bitmap.row(i).collect::<Vec<_>>(), vec![1, 2, 4, 8, 128]);
+            assert_eq!(bitmap.row(i).collect::<Vec<_>>(), vec![1, 2, 4, 8, MIN_SPARSE_INDEX]);
         }
     }
 
     #[test]
     fn dense_ipld() {
-        let bitmap = Bitmap::new(vec![vec![0, 127]]);
+        let bitmap = Bitmap::new(vec![vec![0, MAX_DENSE_INDEX]]);
         assert!(bitmap.is_dense());
         let expected = ipld! {
-            [[0, 127]]
+            [[0, MAX_DENSE_INDEX]]
         };
         assert_roundtrip(DagCborCodec, &bitmap, &expected);
     }
 
     #[test]
     fn sparse_ipld() {
-        let bitmap = Bitmap::new(vec![vec![0, 128]]);
+        let bitmap = Bitmap::new(vec![vec![0, MIN_SPARSE_INDEX]]);
         assert!(!bitmap.is_dense());
         let expected = ipld! {
-            [[0, 128]]
+            [[0, MIN_SPARSE_INDEX]]
         };
         assert_roundtrip(DagCborCodec, &bitmap, &expected);
     }
