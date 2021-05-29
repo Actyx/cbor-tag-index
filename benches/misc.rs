@@ -9,9 +9,9 @@ use rand::{prelude::*, SeedableRng};
 use rand_chacha::ChaChaRng;
 
 /// less than 128 distinct tags - dense index
-const DENSE: &[(&str, usize)] = &[("article", 30), ("sku", 40), ("location", 40)];
+const DENSE: &[(&str, usize)] = &[("article", 10), ("sku", 20), ("location", 20)];
 /// more than 128 distinct tags - sparse index
-const SPARSE: &[(&str, usize)] = &[("article", 30), ("sku", 40), ("location", 100)];
+const SPARSE: &[(&str, usize)] = &[("article", 10), ("sku", 20), ("location", 100)];
 /// extra tags that are added randomly to all events
 const EXTRA: &[&str] = &["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
 

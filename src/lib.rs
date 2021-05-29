@@ -135,6 +135,7 @@ impl<T: Tag> DnfQuery<T> {
     }
 
     pub fn dnf_query(&self, dnf: &DnfQuery<T>, result: &mut [bool]) {
+        // this mapping could be done more efficiently, since both dnf.tags and our tags are ordered
         let translate = dnf
             .tags
             .iter()
@@ -335,10 +336,14 @@ fn dnf_query0<T: Tag>(
                 dnf.sets
                     .iter()
                     .filter_map(|row| {
+                        // if a single index in the row can not be mapped (translate[index] is None),
+                        // we want to skip the entire term.
+                        //
+                        // The somewhat convoluted way to do this is to make the mask_from_bits_iter fail
+                        // by passing an index that will make mask_from_bits_iter fail.
                         mask_from_bits_iter(
-                            row.map(|index| translate[index as usize].unwrap_or(128)),
+                            row.map(|index| translate[index as usize].unwrap_or(MIN_SPARSE_INDEX)),
                         )
-                        .ok()
                     })
                     .collect(),
             );

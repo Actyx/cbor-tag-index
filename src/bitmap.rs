@@ -15,8 +15,7 @@ pub(crate) type IndexMask = u64;
 
 const ONE: IndexMask = 1;
 const DENSE_BITS: u32 = (std::mem::size_of::<IndexMask>() as u32) * 8;
-const MIN_SPARSE_INDEX: u32 = DENSE_BITS;
-#[cfg(test)]
+pub(crate) const MIN_SPARSE_INDEX: u32 = DENSE_BITS;
 const MAX_DENSE_INDEX: u32 = DENSE_BITS - 1;
 
 /// A bitmap with a dense and a sparse case
@@ -261,7 +260,7 @@ impl Decode<DagCborCodec> for DenseBitmap {
         let rows: Vec<Vec<u32>> = Decode::decode(c, r)?;
         Ok(Self(
             rows.into_iter()
-                .map(mask_from_bits_iter)
+                .map(|x| mask_from_bits_iter(x).ok_or_else(|| anyhow::anyhow!("index too large")))
                 .collect::<anyhow::Result<Vec<_>>>()?,
         ))
     }
@@ -316,14 +315,16 @@ impl Iterator for OneBitsIterator {
 
 /// Given an interator of bits, creates a DENSE_BITS bit bitmask.
 /// If any of the bits is too high, returns an error.
-pub fn mask_from_bits_iter(iterator: impl IntoIterator<Item = u32>) -> anyhow::Result<IndexMask> {
+pub fn mask_from_bits_iter(iterator: impl IntoIterator<Item = u32>) -> Option<IndexMask> {
     let mut mask: IndexMask = 0;
     let iter = iterator.into_iter();
     for bit in iter {
-        anyhow::ensure!(bit < MIN_SPARSE_INDEX);
+        if bit > MAX_DENSE_INDEX {
+            return None;
+        }
         mask |= ONE << bit;
     }
-    Ok(mask)
+    Some(mask)
 }
 
 /// Given an iterator of bits, creates either a DENSE_BITS bit bitmask, or a set of bits.
@@ -387,7 +388,10 @@ mod tests {
         assert!(bitmap.is_dense());
         assert_eq!(bitmap.rows(), 7);
         for i in 0..bitmap.rows() {
-            assert_eq!(bitmap.row(i).collect::<Vec<_>>(), vec![1, 2, 4, 8, MAX_DENSE_INDEX]);
+            assert_eq!(
+                bitmap.row(i).collect::<Vec<_>>(),
+                vec![1, 2, 4, 8, MAX_DENSE_INDEX]
+            );
         }
     }
 
@@ -397,7 +401,10 @@ mod tests {
         assert!(!bitmap.is_dense());
         assert_eq!(bitmap.rows(), 9);
         for i in 0..bitmap.rows() {
-            assert_eq!(bitmap.row(i).collect::<Vec<_>>(), vec![1, 2, 4, 8, MIN_SPARSE_INDEX]);
+            assert_eq!(
+                bitmap.row(i).collect::<Vec<_>>(),
+                vec![1, 2, 4, 8, MIN_SPARSE_INDEX]
+            );
         }
     }
 
