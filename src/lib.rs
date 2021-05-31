@@ -197,7 +197,7 @@ impl<T: Tag> DnfQuery<T> {
         for term in terms {
             builder.push(term)?;
         }
-        Ok(builder.dnf_query())
+        Ok(builder.result())
     }
 
     /// We use DnfQuery for both the queries and the index against which they are run.
@@ -288,7 +288,7 @@ impl<T: Tag> TagIndex<T> {
             .map(|set| builder.push(set))
             .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(Self {
-            tags: builder.dnf_query(),
+            tags: builder.result(),
             events,
         })
     }
@@ -452,7 +452,7 @@ impl<T: Tag> DnfQueryBuilder<T> {
     }
 
     /// Return the result as a [DnfQuery]
-    pub fn dnf_query(self) -> DnfQuery<T> {
+    pub fn result(self) -> DnfQuery<T> {
         let perm = self.permutation_table();
         let mut tags = vec![None; self.tags.len()];
         for (tag, index) in self.tags {
