@@ -206,7 +206,7 @@ impl SparseBitmap {
     pub fn columns(&self) -> u32 {
         self.0
             .iter()
-            .filter_map(|s| s.as_ref().get(s.len() - 1).map(|x| *x))
+            .filter_map(|s| s.as_ref().last().copied())
             .max()
             .unwrap_or_default()
     }
