@@ -49,12 +49,12 @@ pub type TagSet<T> = vec_collections::VecSet<[T; 4]>;
 ///
 /// [DNF]: https://en.wikipedia.org/wiki/Disjunctive_normal_form
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DnfQuery<T: Tag> {
+pub struct DnfQuery<T> {
     tags: Vec<T>,
     sets: Bitmap,
 }
 
-impl<T: Tag + DagCbor> Encode<DagCborCodec> for DnfQuery<T> {
+impl<T: DagCbor> Encode<DagCborCodec> for DnfQuery<T> {
     fn encode<W: std::io::Write>(&self, c: DagCborCodec, w: &mut W) -> anyhow::Result<()> {
         w.write_all(&[0x82])?;
         self.tags.encode(c, w)?;
@@ -63,12 +63,13 @@ impl<T: Tag + DagCbor> Encode<DagCborCodec> for DnfQuery<T> {
     }
 }
 
-impl<T: Tag + DagCbor> Decode<DagCborCodec> for DnfQuery<T> {
+impl<T: DagCbor> Decode<DagCborCodec> for DnfQuery<T> {
     fn decode<R: std::io::Read + std::io::Seek>(
         c: DagCborCodec,
         r: &mut R,
     ) -> anyhow::Result<Self> {
         let (tags, sets) = <(Vec<T>, Bitmap)>::decode(c, r)?;
+        anyhow::ensure!((sets.columns() as usize) <= tags.len());
         Ok(Self { tags, sets })
     }
 }
@@ -103,14 +104,23 @@ impl<T: Tag + DagCbor> Decode<DagCborCodec> for DnfQuery<T> {
 /// }
 ///```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TagIndex<T: Tag> {
+pub struct TagIndex<T> {
     /// efficiently encoded distinct tags
     tags: DnfQuery<T>,
     /// tag offset for each event
     events: Vec<u32>,
 }
 
-impl<T: Tag + DagCbor> Encode<DagCborCodec> for TagIndex<T> {
+impl<T> Default for TagIndex<T> {
+    fn default() -> Self {
+        Self {
+            tags: DnfQuery::empty(),
+            events: Default::default(),
+        }
+    }
+}
+
+impl<T: DagCbor> Encode<DagCborCodec> for TagIndex<T> {
     fn encode<W: std::io::Write>(&self, c: DagCborCodec, w: &mut W) -> anyhow::Result<()> {
         w.write_all(&[0x82])?;
         self.tags.encode(c, w)?;
@@ -119,13 +129,61 @@ impl<T: Tag + DagCbor> Encode<DagCborCodec> for TagIndex<T> {
     }
 }
 
-impl<T: Tag + DagCbor> Decode<DagCborCodec> for TagIndex<T> {
+impl<T: DagCbor> Decode<DagCborCodec> for TagIndex<T> {
     fn decode<R: std::io::Read + std::io::Seek>(
         c: DagCborCodec,
         r: &mut R,
     ) -> anyhow::Result<Self> {
         let (tags, events) = <(DnfQuery<T>, Vec<u32>)>::decode(c, r)?;
+        anyhow::ensure!(events.iter().all(|x| (*x as usize) < tags.len()));
         Ok(Self { tags, events })
+    }
+}
+
+impl<T> DnfQuery<T> {
+    /// An empty dnf query which matches nothing
+    pub fn empty() -> Self {
+        Self {
+            tags: Default::default(),
+            sets: Default::default(),
+        }
+    }
+
+    /// Are we an empty dnf query which matches nothing?
+    pub fn is_empty(&self) -> bool {
+        self.sets.rows() == 0
+    }
+
+    /// a dnf query containing an empty set, which matches everything
+    pub fn all() -> Self {
+        Self {
+            tags: Default::default(),
+            sets: Bitmap::new(vec![vec![]]),
+        }
+    }
+
+    /// Are we a dnf query containing an empty set, which matches everything?
+    pub fn is_all(&self) -> bool {
+        self.sets.iter().any(|row| row.count() == 0)
+    }
+
+    /// get back the terms making up the dnf query
+    ///
+    /// Note that there is no guarantee that there will be the same number of terms or that
+    /// tags in each term will be ordered in the same way.
+    pub fn terms(&self) -> impl Iterator<Item = impl Iterator<Item = &T>> {
+        self.sets
+            .iter()
+            .map(move |rows| rows.map(move |index| &self.tags[index as usize]))
+    }
+
+    /// Get the iterator for a single term. This will panic when out of bounds
+    pub(crate) fn term(&self, index: usize) -> impl Iterator<Item = &T> {
+        self.sets.row(index).map(move |i| &self.tags[i as usize])
+    }
+
+    pub fn len(&self) -> usize {
+        self.sets.rows()
     }
 }
 
@@ -154,32 +212,6 @@ impl<T: Tag> DnfQuery<T> {
         dnf_query0(&self.sets, dnf, &translate, result);
     }
 
-    /// An empty dnf query which matches nothing
-    pub fn empty() -> Self {
-        Self {
-            tags: Default::default(),
-            sets: Default::default(),
-        }
-    }
-
-    /// Are we an empty dnf query which matches nothing?
-    pub fn is_empty(&self) -> bool {
-        self.sets.rows() == 0
-    }
-
-    /// a dnf query containing an empty set, which matches everything
-    pub fn all() -> Self {
-        Self {
-            tags: Default::default(),
-            sets: Bitmap::new(vec![vec![]]),
-        }
-    }
-
-    /// Are we a dnf query containing an empty set, which matches everything?
-    pub fn is_all(&self) -> bool {
-        self.sets.iter().any(|row| row.count() == 0)
-    }
-
     /// Helper method to return the matching indexes, mostly for tests
     pub fn matching(&self, index: &TagIndex<T>) -> Vec<bool> {
         let mut matching = vec![true; index.len()];
@@ -205,30 +237,11 @@ impl<T: Tag> DnfQuery<T> {
             *matching = *matching && tmp[*index as usize];
         }
     }
-
-    /// get back the terms making up the dnf query
-    ///
-    /// Note that there is no guarantee that there will be the same number of terms or that
-    /// tags in each term will be ordered in the same way.
-    pub fn terms(&self) -> impl Iterator<Item = impl Iterator<Item = &T>> {
-        self.sets
-            .iter()
-            .map(move |rows| rows.map(move |index| &self.tags[index as usize]))
-    }
-
-    /// Get the iterator for a single term. This will panic when out of bounds
-    pub(crate) fn term(&self, index: usize) -> impl Iterator<Item = &T> {
-        self.sets.row(index).map(move |i| &self.tags[i as usize])
-    }
-
-    pub fn len(&self) -> usize {
-        self.sets.rows()
-    }
 }
 
-impl<T: Tag + Display> Display for DnfQuery<T> {
+impl<T: Display> Display for DnfQuery<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let term_to_string = |term: Vec<T>| -> String {
+        let term_to_string = |term: Vec<&T>| -> String {
             term.iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
@@ -236,7 +249,7 @@ impl<T: Tag + Display> Display for DnfQuery<T> {
         };
         let res = self
             .terms()
-            .map(|x| term_to_string(x.cloned().collect()))
+            .map(|x| term_to_string(x.collect()))
             .collect::<Vec<_>>()
             .join(" | ");
         f.write_str(&res)
@@ -280,6 +293,15 @@ impl<T: Tag> TagIndex<T> {
         })
     }
 
+    pub fn get<C: FromIterator<T>>(&self, index: usize) -> Option<C> {
+        let mask_index = self.events.get(index)?;
+        let mask = self.tags.sets.row(*mask_index as usize);
+        let lut = &self.tags.tags;
+        Some(mask.map(|i| lut[i as usize].clone()).collect())
+    }
+}
+
+impl<T> TagIndex<T> {
     pub fn distinct_tags(&self) -> &[T] {
         &self.tags.tags
     }
@@ -288,13 +310,6 @@ impl<T: Tag> TagIndex<T> {
         self.events
             .iter()
             .map(move |offset| self.tags.term(*offset as usize))
-    }
-
-    pub fn get<C: FromIterator<T>>(&self, index: usize) -> Option<C> {
-        let mask_index = self.events.get(index)?;
-        let mask = self.tags.sets.row(*mask_index as usize);
-        let lut = &self.tags.tags;
-        Some(mask.map(|i| lut[i as usize].clone()).collect())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -314,7 +329,7 @@ impl<T: Tag> TagIndex<T> {
     }
 }
 
-impl<T: Tag + Display> Display for TagIndex<T> {
+impl<T: Display> Display for TagIndex<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list()
             .entries(

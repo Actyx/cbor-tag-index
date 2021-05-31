@@ -50,6 +50,13 @@ impl Bitmap {
         }
     }
 
+    pub fn columns(&self) -> u32 {
+        match self {
+            Self::Dense(x) => x.columns(),
+            Self::Sparse(x) => x.columns(),
+        }
+    }
+
     pub fn row(&self, index: usize) -> impl Iterator<Item = u32> + '_ {
         match self {
             Self::Dense(x) => x.row(index).left_iter(),
@@ -129,6 +136,14 @@ impl DenseBitmap {
         self.0.len()
     }
 
+    pub fn columns(&self) -> u32 {
+        self.0
+            .iter()
+            .map(|x| (DENSE_BITS - x.leading_zeros()))
+            .max()
+            .unwrap_or_default()
+    }
+
     pub fn row(&self, index: usize) -> impl Iterator<Item = u32> + '_ {
         OneBitsIterator(self.0[index])
     }
@@ -186,6 +201,14 @@ impl SparseBitmap {
 
     pub fn rows(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn columns(&self) -> u32 {
+        self.0
+            .iter()
+            .filter_map(|s| s.as_ref().get(s.len() - 1).map(|x| *x))
+            .max()
+            .unwrap_or_default()
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, IndexSet> {
