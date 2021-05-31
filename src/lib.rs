@@ -12,8 +12,7 @@ use libipld::{
     codec::{Decode, Encode},
 };
 use libipld_cbor::DagCborCodec;
-use std::hash::Hash;
-use std::{convert::TryFrom, fmt, iter::FromIterator, mem::swap, usize};
+use std::{convert::TryFrom, fmt, hash::Hash, iter::FromIterator, mem::swap, usize};
 mod bitmap;
 mod util;
 use bitmap::*;
@@ -25,19 +24,16 @@ pub trait Tag: PartialEq + Eq + Hash + Ord + Clone + 'static {}
 
 impl<T: PartialEq + Eq + Hash + Ord + Clone + 'static> Tag for T {}
 
-/// a set of tags
+/// a set of tags, used only in tests
 #[cfg(test)]
 pub type TagSet<T> = vec_collections::VecSet<[T; 4]>;
 
-/// A compact representation of a seq of tag sets,
+/// A compact representation of a seq of tag sets, to be used as a [DNF] query.
 ///
-/// to be used as a DNF query.
+/// The internal repesentation is using a bitmap for efficiency. So assuming string
+/// tags, e.g. ("a" & "b") | ("b" & "c") | ("d") would be encoded as
 ///
-/// `tags` are a sequence of strings, where the offset corresponds to the
-/// set bit in the bitmap.
-///
-/// E.g. ("a" & "b") | ("b" & "c") | ("d") would be encoded as
-///
+/// ```javascript
 /// {
 ///   tags: ["a", "b", "c", "d"],
 ///   sets: [
@@ -46,6 +42,12 @@ pub type TagSet<T> = vec_collections::VecSet<[T; 4]>;
 ///     b1000,
 ///   ]
 /// }
+/// ```
+///
+/// so the possibly large tags have to be stored only once, and operations can work
+/// on bit sets.
+///
+/// [DNF]: https://en.wikipedia.org/wiki/Disjunctive_normal_form
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DnfQuery<T: Tag> {
     tags: Vec<T>,
@@ -71,10 +73,12 @@ impl<T: Tag + DagCbor> Decode<DagCborCodec> for DnfQuery<T> {
     }
 }
 
-/// A tag index, using bitmaps to encode the distinct tag sets, and a vector
-/// of offsets for each event.
+/// A tag index, a sequence of tag sets that internally uses bitmaps to
+/// encode the distinct tag sets, and a vector of offsets for each event.
 ///
-/// A sequence of events with the following tag sets:
+/// To be used with [DnfQuery].
+///
+/// A sequence with the following tag sets:
 ///
 /// `[{"a"}, {"a", "b"}, {"b","c"}, {"a"}]`
 ///
@@ -83,7 +87,7 @@ impl<T: Tag + DagCbor> Decode<DagCborCodec> for DnfQuery<T> {
 /// ```javascript
 /// {
 ///   tags: {
-///     tags: { "a": 0, "b": 1, "c": 2 },
+///     tags: [ "a", "b", "c" ],
 ///     sets: [
 ///       b001, //   a
 ///       b010, //  b
@@ -126,6 +130,8 @@ impl<T: Tag + DagCbor> Decode<DagCborCodec> for TagIndex<T> {
 }
 
 impl<T: Tag> DnfQuery<T> {
+    /// Build a new DnfQuery from a sequence of terms, where each term contains
+    /// a sequence of tags.
     pub fn new(
         terms: impl IntoIterator<Item = impl IntoIterator<Item = T>>,
     ) -> anyhow::Result<Self> {
@@ -156,7 +162,7 @@ impl<T: Tag> DnfQuery<T> {
         }
     }
 
-    /// An empty dnf query which matches nothing
+    /// Are we an empty dnf query which matches nothing?
     pub fn is_empty(&self) -> bool {
         self.sets.rows() == 0
     }
@@ -169,7 +175,7 @@ impl<T: Tag> DnfQuery<T> {
         }
     }
 
-    /// a dnf query containing an empty set, which matches everything
+    /// Are we a dnf query containing an empty set, which matches everything?
     pub fn is_all(&self) -> bool {
         self.sets.iter().any(|row| row.count() == 0)
     }
@@ -204,17 +210,18 @@ impl<T: Tag> DnfQuery<T> {
     ///
     /// Note that there is no guarantee that there will be the same number of terms or that
     /// tags in each term will be ordered in the same way.
-    pub fn terms(&self) -> impl Iterator<Item = impl Iterator<Item = &T> + '_> + '_ {
+    pub fn terms(&self) -> impl Iterator<Item = impl Iterator<Item = &T>> {
         self.sets
             .iter()
             .map(move |rows| rows.map(move |index| &self.tags[index as usize]))
     }
 
-    pub fn term(&self, index: usize) -> impl Iterator<Item = &T> + '_ {
+    /// Get the iterator for a single term. This will panic when out of bounds
+    pub(crate) fn term(&self, index: usize) -> impl Iterator<Item = &T> {
         self.sets.row(index).map(move |i| &self.tags[i as usize])
     }
 
-    pub fn term_count(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.sets.rows()
     }
 }
@@ -259,9 +266,11 @@ impl<T> FromIterator<T> for DebugUsingDisplay<T> {
 }
 
 impl<T: Tag> TagIndex<T> {
-    pub fn new(e: impl IntoIterator<Item = impl IntoIterator<Item = T>>) -> anyhow::Result<Self> {
+    pub fn new(
+        elements: impl IntoIterator<Item = impl IntoIterator<Item = T>>,
+    ) -> anyhow::Result<Self> {
         let mut builder = DnfQueryBuilder::new();
-        let events = e
+        let events = elements
             .into_iter()
             .map(|set| builder.push(set))
             .collect::<anyhow::Result<Vec<_>>>()?;
