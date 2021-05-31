@@ -14,7 +14,6 @@ use libipld::{
 use libipld_cbor::DagCborCodec;
 use std::hash::Hash;
 use std::{convert::TryFrom, fmt, iter::FromIterator, mem::swap, usize};
-use vec_collections::VecSet;
 mod bitmap;
 mod util;
 use bitmap::*;
@@ -27,7 +26,8 @@ pub trait Tag: PartialEq + Eq + Hash + Ord + Clone + 'static {}
 impl<T: PartialEq + Eq + Hash + Ord + Clone + 'static> Tag for T {}
 
 /// a set of tags
-pub type TagSet<T> = VecSet<[T; 4]>;
+#[cfg(test)]
+pub type TagSet<T> = vec_collections::VecSet<[T; 4]>;
 
 /// A compact representation of a seq of tag sets,
 ///
@@ -126,15 +126,19 @@ impl<T: Tag + DagCbor> Decode<DagCborCodec> for TagIndex<T> {
 }
 
 impl<T: Tag> DnfQuery<T> {
-    pub fn new<'a>(sets: impl IntoIterator<Item = &'a TagSet<T>>) -> anyhow::Result<Self> {
+    pub fn new(
+        terms: impl IntoIterator<Item = impl IntoIterator<Item = T>>,
+    ) -> anyhow::Result<Self> {
         let mut builder = DnfQueryBuilder::new();
-        for set in sets {
-            builder.push(set.clone())?;
+        for term in terms {
+            builder.push(term)?;
         }
         Ok(builder.dnf_query())
     }
 
-    pub fn dnf_query(&self, dnf: &DnfQuery<T>, result: &mut [bool]) {
+    /// We use DnfQuery for both the queries and the index against which they are run.
+    /// This is for the latter: assuming this is an index, execute the dnf query
+    pub(crate) fn dnf_query(&self, dnf: &DnfQuery<T>, result: &mut [bool]) {
         // this mapping could be done more efficiently, since both dnf.tags and our tags are ordered
         let translate = dnf
             .tags
@@ -152,6 +156,11 @@ impl<T: Tag> DnfQuery<T> {
         }
     }
 
+    /// An empty dnf query which matches nothing
+    pub fn is_empty(&self) -> bool {
+        self.sets.rows() == 0
+    }
+
     /// a dnf query containing an empty set, which matches everything
     pub fn all() -> Self {
         Self {
@@ -160,6 +169,12 @@ impl<T: Tag> DnfQuery<T> {
         }
     }
 
+    /// a dnf query containing an empty set, which matches everything
+    pub fn is_all(&self) -> bool {
+        self.sets.iter().any(|row| row.count() == 0)
+    }
+
+    /// Helper method to return the matching indexes, mostly for tests
     pub fn matching(&self, index: &TagIndex<T>) -> Vec<bool> {
         let mut matching = vec![true; index.len()];
         self.set_matching(index, &mut matching);
@@ -185,12 +200,18 @@ impl<T: Tag> DnfQuery<T> {
         }
     }
 
-    /// get back the tag sets the dnf query
-    pub fn terms(&self) -> impl Iterator<Item = TagSet<T>> + '_ {
-        self.sets.iter().map(move |rows| {
-            rows.map(|index| self.tags[index as usize].clone())
-                .collect()
-        })
+    /// get back the terms making up the dnf query
+    ///
+    /// Note that there is no guarantee that there will be the same number of terms or that
+    /// tags in each term will be ordered in the same way.
+    pub fn terms(&self) -> impl Iterator<Item = impl Iterator<Item = &T> + '_> + '_ {
+        self.sets
+            .iter()
+            .map(move |rows| rows.map(move |index| &self.tags[index as usize]))
+    }
+
+    pub fn term(&self, index: usize) -> impl Iterator<Item = &T> + '_ {
+        self.sets.row(index).map(move |i| &self.tags[i as usize])
     }
 
     pub fn term_count(&self) -> usize {
@@ -200,7 +221,7 @@ impl<T: Tag> DnfQuery<T> {
 
 impl<T: Tag + Display> Display for DnfQuery<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let term_to_string = |term: TagSet<T>| -> String {
+        let term_to_string = |term: Vec<T>| -> String {
             term.iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
@@ -208,7 +229,7 @@ impl<T: Tag + Display> Display for DnfQuery<T> {
         };
         let res = self
             .terms()
-            .map(term_to_string)
+            .map(|x| term_to_string(x.cloned().collect()))
             .collect::<Vec<_>>()
             .join(" | ");
         f.write_str(&res)
@@ -254,11 +275,10 @@ impl<T: Tag> TagIndex<T> {
         &self.tags.tags
     }
 
-    pub fn tags(&self) -> impl Iterator<Item = TagSet<T>> + '_ {
-        let lut = self.tags.terms().collect::<Vec<_>>();
+    pub fn tags(&self) -> impl Iterator<Item = impl Iterator<Item = &T>> + '_ {
         self.events
             .iter()
-            .map(move |offset| lut[*offset as usize].clone())
+            .map(move |offset| self.tags.term(*offset as usize))
     }
 
     pub fn get<C: FromIterator<T>>(&self, index: usize) -> Option<C> {
@@ -500,7 +520,7 @@ mod tests {
     // create a dnf query, separated by |
     fn dnf(tags: &str) -> DnfQuery<TestTag> {
         let parts = tags.split('|').map(ts).collect::<Vec<_>>();
-        DnfQuery::new(&parts).unwrap()
+        DnfQuery::new(parts).unwrap()
     }
 
     // create a dnf query, separated by |
@@ -542,9 +562,12 @@ mod tests {
         let mut bits2 = vec![false; index.len()];
         query.set_matching(&index, &mut bits1);
 
-        let query_tags = query.terms().collect::<Vec<_>>();
         for (tags, matching) in index.tags().zip(bits2.iter_mut()) {
-            *matching = query_tags.iter().any(|q| q.is_subset(&tags))
+            let tags: TagSet<TestTag> = tags.cloned().collect();
+            *matching = query
+                .terms()
+                .map(|x| x.cloned().collect::<TagSet<TestTag>>())
+                .any(|q| q.is_subset(&tags))
         }
         let bt = bits1
             .iter()

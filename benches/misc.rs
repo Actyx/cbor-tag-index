@@ -1,12 +1,13 @@
 #![allow(clippy::type_complexity)]
 use std::sync::Arc;
 
-use cbor_tag_index::{DnfQuery, TagIndex, TagSet};
+use cbor_tag_index::{DnfQuery, TagIndex};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use libipld::codec::Codec;
 use libipld_cbor::DagCborCodec;
 use rand::{prelude::*, SeedableRng};
 use rand_chacha::ChaChaRng;
+use vec_collections::VecSet;
 
 /// less than 128 distinct tags - dense index
 const DENSE: &[(&str, usize)] = &[("article", 10), ("sku", 20), ("location", 20)];
@@ -14,6 +15,8 @@ const DENSE: &[(&str, usize)] = &[("article", 10), ("sku", 20), ("location", 20)
 const SPARSE: &[(&str, usize)] = &[("article", 10), ("sku", 20), ("location", 100)];
 /// extra tags that are added randomly to all events
 const EXTRA: &[&str] = &["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+
+type TagSet<T> = VecSet<[T; 4]>;
 
 fn create_example(
     recipe: &[(&str, usize)],
@@ -62,7 +65,7 @@ fn create_example(
         })
         .collect::<Vec<_>>();
     let index = TagIndex::new(events)?;
-    let query = DnfQuery::new(&query)?;
+    let query = DnfQuery::new(query)?;
     Ok((index, query))
 }
 

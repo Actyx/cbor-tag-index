@@ -1,6 +1,9 @@
 use super::*;
 use quickcheck::Arbitrary;
 use std::collections::{BTreeSet, HashSet};
+use vec_collections::VecSet;
+
+type TagSet<T> = VecSet<[T; 4]>;
 
 #[derive(Clone)]
 struct TagSetHelper<T>(TagSet<T>);
@@ -24,7 +27,7 @@ impl<T: Tag + Arbitrary> Arbitrary for DnfQuery<T> {
         let tags: Vec<TagSetHelper<T>> = Arbitrary::arbitrary(g);
         let mut tags: Vec<TagSet<T>> = tags.into_iter().map(|x| x.0).collect();
         tags.truncate(3);
-        DnfQuery::new(&tags).unwrap()
+        DnfQuery::new(tags).unwrap()
     }
 }
 
