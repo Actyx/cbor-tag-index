@@ -20,9 +20,11 @@ use bitmap::*;
 mod arb;
 #[cfg(test)]
 mod size_tests;
-pub trait Tag: PartialEq + Eq + Hash + Ord + Clone + 'static {}
 
-impl<T: PartialEq + Eq + Hash + Ord + Clone + 'static> Tag for T {}
+/// This trait just combines the traits that you definitely need for a tag
+pub trait Tag: Hash + Ord + Clone + 'static {}
+
+impl<T: Hash + Ord + Clone + 'static> Tag for T {}
 
 /// a set of tags, used only in tests
 #[cfg(test)]
