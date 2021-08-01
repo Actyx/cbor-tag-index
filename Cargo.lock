@@ -184,7 +184,6 @@ dependencies = [
  "fnv",
  "hex",
  "libipld",
- "libipld-cbor",
  "quickcheck",
  "quickcheck_macros",
  "rand",
@@ -587,9 +586,9 @@ dependencies = [
 
 [[package]]
 name = "libipld-cbor"
-version = "0.12.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54633e08c320221eebaf2052b09390a6bca26227258be65222e23fc86840839a"
+checksum = "51882ee3a6ebc8b770b507558b8bc993659d7e96e160fb796bc1fc7c290d74c4"
 dependencies = [
  "byteorder",
  "libipld-core",

@@ -1,6 +1,5 @@
 use crate::{DnfQuery, TagIndex, TagSet};
-use libipld::codec::Codec;
-use libipld_cbor::DagCborCodec;
+use libipld::{cbor::DagCborCodec, codec::Codec};
 use rand::{prelude::*, SeedableRng};
 use rand_chacha::ChaChaRng;
 use std::{io::Cursor, sync::Arc};

@@ -1,10 +1,12 @@
 use std::{io, iter::FromIterator};
 
-use libipld::codec::Decode;
-use libipld_cbor::{
-    decode::{read_len, read_u8},
-    error::UnexpectedCode,
-    DagCborCodec,
+use libipld::{
+    cbor::{
+        decode::{read_len, read_u8},
+        error::UnexpectedCode,
+        DagCborCodec,
+    },
+    codec::Decode,
 };
 
 /// Like the one from itertools, but more convenient
