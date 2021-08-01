@@ -33,7 +33,7 @@ impl Default for Bitmap {
 
 impl Bitmap {
     pub fn new(items: impl IntoIterator<Item = impl IntoIterator<Item = u32>>) -> Self {
-        Self::from_iter(items.into_iter())
+        items.into_iter().collect::<Self>()
     }
 
     pub fn is_dense(&self) -> bool {
