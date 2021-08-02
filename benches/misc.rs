@@ -3,8 +3,7 @@ use std::sync::Arc;
 
 use cbor_tag_index::{DnfQuery, TagIndex};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use libipld::codec::Codec;
-use libipld_cbor::DagCborCodec;
+use libipld::{cbor::DagCborCodec, codec::Codec};
 use rand::{prelude::*, SeedableRng};
 use rand_chacha::ChaChaRng;
 use vec_collections::VecSet;

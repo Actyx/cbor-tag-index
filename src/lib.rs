@@ -8,10 +8,9 @@ extern crate quickcheck_macros;
 use fmt::{Display, Write};
 use fnv::FnvHashMap;
 use libipld::{
-    cbor::DagCbor,
+    cbor::{DagCbor, DagCborCodec},
     codec::{Decode, Encode},
 };
-use libipld_cbor::DagCborCodec;
 use std::{convert::TryFrom, fmt, hash::Hash, iter::FromIterator, mem::swap, usize};
 mod bitmap;
 mod util;
