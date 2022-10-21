@@ -2,7 +2,8 @@ use std::{io, iter::FromIterator};
 
 use libipld::{
     cbor::{
-        decode::{read_len, read_u8},
+        cbor::MajorKind,
+        decode::{read_major, read_uint},
         error::UnexpectedCode,
         DagCborCodec,
     },
@@ -52,23 +53,6 @@ where
 
 impl<'a, T: Iterator + Sized + Send + 'a> IterExt<'a> for T {}
 
-/// Create an iterator from a faillble fn
-///
-/// the fn will be called until it returns either Ok(None) or Err(...)
-pub(crate) fn from_fallible_fn<'a, T: 'a>(
-    mut f: impl FnMut() -> anyhow::Result<Option<T>> + 'a,
-) -> impl Iterator<Item = anyhow::Result<T>> + 'a {
-    let mut done = false;
-    std::iter::from_fn(move || match f() {
-        Err(cause) if !done => {
-            done = true;
-            Some(Err(cause))
-        }
-        Ok(Some(value)) if !done => Some(Ok(value)),
-        _ => None,
-    })
-}
-
 pub fn read_seq<C, R, T>(r: &mut R) -> C
 where
     C: FromIterator<anyhow::Result<T>>,
@@ -76,15 +60,14 @@ where
     T: Decode<DagCborCodec>,
 {
     let inner = |r: &mut R| -> anyhow::Result<C> {
-        let major = read_u8(r)?;
-        let result = match major {
-            0x80..=0x9b => {
-                let len = read_len(r, major - 0x80)?;
+        let major = read_major(r)?;
+        let result = match major.kind() {
+            MajorKind::Array => {
+                let len = read_uint(r, major)?;
                 read_seq_fl(r, len)
             }
-            0x9f => read_seq_il(r),
             _ => {
-                return Err(UnexpectedCode::new::<C>(major).into());
+                return Err(UnexpectedCode::new::<C>(major.into()).into());
             }
         };
         Ok(result)
@@ -97,30 +80,11 @@ where
 }
 
 /// read a fixed length cbor sequence into a generic collection that implements FromIterator
-pub fn read_seq_fl<C, R, T>(r: &mut R, len: usize) -> C
+fn read_seq_fl<C, R, T>(r: &mut R, len: u64) -> C
 where
     C: FromIterator<anyhow::Result<T>>,
     R: io::Read + io::Seek,
     T: Decode<DagCborCodec>,
 {
     (0..len).map(|_| T::decode(DagCborCodec, r)).collect()
-}
-
-/// read an indefinite length cbor sequence into a generic collection that implements FromIterator
-pub fn read_seq_il<C, R, T>(r: &mut R) -> C
-where
-    C: FromIterator<anyhow::Result<T>>,
-    R: io::Read + io::Seek,
-    T: Decode<DagCborCodec>,
-{
-    from_fallible_fn(|| -> anyhow::Result<Option<T>> {
-        let major = read_u8(r)?;
-        if major == 0xff {
-            return Ok(None);
-        }
-        r.seek(io::SeekFrom::Current(-1))?;
-        let value = T::decode(DagCborCodec, r)?;
-        Ok(Some(value))
-    })
-    .collect()
 }

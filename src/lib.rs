@@ -15,6 +15,7 @@ use std::{convert::TryFrom, fmt, hash::Hash, iter::FromIterator, mem::swap, usiz
 mod bitmap;
 mod util;
 use bitmap::*;
+use vec_collections::AbstractVecSet;
 #[cfg(test)]
 mod arb;
 #[cfg(test)]
@@ -232,7 +233,7 @@ impl<T: Tag> DnfQuery<T> {
             }
         }
         // evaluate the dnf query for these fields
-        index.tags.dnf_query(&self, &mut tmp);
+        index.tags.dnf_query(self, &mut tmp);
         // write result from tmp
         for (matching, index) in matches.iter_mut().zip(index.events.iter()) {
             *matching = *matching && tmp[*index as usize];
